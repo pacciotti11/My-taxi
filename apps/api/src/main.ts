@@ -12,6 +12,13 @@ async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule, { rawBody: true });
 
   app.use(helmet());
+  app.enableCors({
+    origin:
+      env.NODE_ENV === "production"
+        ? (process.env.CORS_ORIGINS ?? "").split(",").filter(Boolean)
+        : true,
+    credentials: true,
+  });
   app.enableVersioning({ type: VersioningType.URI, defaultVersion: "1" });
   app.enableShutdownHooks();
 

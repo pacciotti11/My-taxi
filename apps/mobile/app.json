@@ -1,0 +1,41 @@
+{
+  "expo": {
+    "name": "PrivateRide",
+    "slug": "privateride",
+    "version": "0.1.0",
+    "scheme": "privateride",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "bg.privateride.app",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "PrivateRide показва вашето местоположение на картата и го използва за намиране на шофьор.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Шофьорите споделят местоположение по време на активен курс, за да може пътникът да ги проследи."
+      }
+    },
+    "android": {
+      "package": "bg.privateride.app",
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION"
+      ]
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Шофьорите споделят местоположение по време на активен курс."
+        }
+      ]
+    ],
+    "extra": {
+      "apiUrl": "http://localhost:3000"
+    }
+  }
+}

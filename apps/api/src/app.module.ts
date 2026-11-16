@@ -5,6 +5,7 @@ import { AuditService } from "./common/audit.service";
 import { JwtAuthGuard } from "./common/guards/jwt-auth.guard";
 import { PrismaService } from "./common/prisma.service";
 import { RedisService } from "./common/redis.service";
+import { AdminOverviewController } from "./modules/admin/overview.controller";
 import { AuthModule } from "./modules/auth/auth.module";
 import {
   AdminDriversController,
@@ -55,6 +56,7 @@ import { UsersController } from "./modules/users/users.controller";
     PaymentsController,
     AdminPaymentsController,
     WebhooksController,
+    AdminOverviewController,
   ],
   providers: [
     PrismaService,

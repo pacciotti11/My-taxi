@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_USER: privateride
+          POSTGRES_PASSWORD: privateride_dev
+          POSTGRES_DB: privateride_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U privateride"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://privateride:privateride_dev@localhost:5432/privateride_test
+      TEST_DATABASE_URL: postgresql://privateride:privateride_dev@localhost:5432/privateride_test
+      REDIS_URL: redis://localhost:6379
+      JWT_ACCESS_SECRET: ci_access_secret_0123456789
+      JWT_REFRESH_SECRET: ci_refresh_secret_0123456789
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @privateride/shared --filter @privateride/validation --filter @privateride/database build
+      - run: pnpm --filter @privateride/database exec prisma migrate deploy
+      - run: pnpm --filter @privateride/api build
+      - run: pnpm --filter @privateride/api test
+      - run: pnpm --filter @privateride/admin build
+      - run: pnpm --filter @privateride/mobile exec tsc --noEmit

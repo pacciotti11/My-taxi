@@ -20,27 +20,58 @@ Status legend: ✅ done · 🔄 in progress · ⬜ not started
 - ✅ Tests: 17 passing (e2e invitation lifecycle incl. concurrency race,
   refresh reuse, RBAC, cross-community isolation; unit ride state machine)
 
-## Milestone 3 — Ride engine & matching 🔄
-- Ride lifecycle state machine (transactional transitions, status history)
-- Fare estimates with pricing snapshots
-- PostGIS matching with radius expansion, offers with expiry
-- One-active-ride invariants (already enforced by DB)
+## Milestone 3 — Ride engine & matching ✅
+- Transactional ride state machine (row locks, status history, shared
+  transition map); estimates with immutable pricing snapshots; final fare
+  recomputed from actual duration on completion
+- Driver onboarding (profile, vehicles, admin verification), availability,
+  location ingestion with accuracy/staleness validation
+- PostGIS matching with radius expansion (3/5/10 km), offers with expiry,
+  accept/reject/timeout, BullMQ coordination worker
 
-## Milestone 4 — Real-time ⬜
-- Socket.IO gateway (authenticated), ride rooms, location ingestion,
-  Redis latest-location, stale detection
+## Milestone 4 — Real-time ✅
+- Redis pub/sub event bridge → Socket.IO gateway (`/realtime`), JWT auth at
+  handshake, room isolation (ride rooms + per-driver offer rooms)
+- GPS streaming over socket or REST; RideLocation traces during active rides
 
-## Milestone 5 — Payments ⬜
-- PaymentProvider interface, sandbox provider, Stripe Connect adapter stub
-- Financial ledger (double-entry, minor units), idempotent webhooks
+## Milestone 5 — Payments ✅
+- PaymentProvider interface; sandbox provider (test mode); Stripe adapter
+  written but UNVERIFIED without real credentials
+- Authorize before matching → capture on completion → COMPLETED, with
+  PAYMENT_FAILED + retry (re-authorization) path
+- Double-entry ledger in minor units, unique idempotency keys; refunds;
+  sandbox payouts; signature-verified idempotent webhooks
 
-## Milestone 2/6 — Mobile & Admin ⬜
-- Expo app (bg/en, passenger + driver flows)
-- Next.js admin dashboard
+## Milestone 6 — Admin dashboard ✅ (core)
+- Next.js + Tailwind (shadcn/ui deliberately skipped for now — plain
+  Tailwind components keep the build dependency-light; revisit if desired)
+- Login, overview stats, members approve/suspend/reject, invitations
+  create/revoke, driver + vehicle verification, rides monitor (10 s poll),
+  payments + refunds. Verified live against the API with Playwright.
+- Token in localStorage — acceptable for a trusted-admin MVP; move to
+  httpOnly cookie sessions before exposure beyond trusted admins.
 
-## Milestones 7/8 — Hardening & staging ⬜
-- GDPR workflows (export, deletion), retention jobs
-- CI/CD, staging deploy, device builds (requires Apple/Google accounts)
+## Milestone 2 — Mobile app 🔄 (functional scaffold, NOT device-tested)
+- Expo SDK 52 + expo-router + TypeScript (strict, typecheck passes)
+- bg/en i18n (bg default), secure token storage with refresh rotation
+- Passenger: estimate → request → live driver tracking via socket →
+  completion → retry payment; resume of active ride on app restart
+- Driver: online toggle with foreground GPS streaming, offers (socket push),
+  accept/reject, arrived/start/complete, earnings
+- Payment methods: sandbox token registration (real flow = provider-hosted
+  sheet, e.g. Stripe PaymentSheet)
+- Map is a placeholder component: react-native-maps + geocoding require an
+  Expo development build and a maps provider key (M8); screens are built so
+  the map drops in without flow changes
+
+## Milestones 7/8 — Hardening & staging ⬜ (remaining)
+- Ratings endpoints, notifications delivery (BullMQ workers, Expo push),
+  email/SMS providers, GDPR export + anonymization jobs, GPS retention job
+- Background location (dev build), address autocomplete/geocoding provider
+- Device builds via EAS, TestFlight / Play internal testing
+- Staging deploy, Sentry/OTel wiring, backups
+- CI exists (.github/workflows/ci.yml: build, migrate, 35 API tests, admin
+  build, mobile typecheck)
 
 ## Known caveats
 - Prisma cannot declare GiST indexes on `Unsupported` geography columns, so
