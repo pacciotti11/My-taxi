@@ -17,6 +17,8 @@ import { InvitationsService } from "./modules/invitations/invitations.service";
 import { MembersService } from "./modules/invitations/members.service";
 import { MapsService } from "./modules/maps/maps.service";
 import { PricingService } from "./modules/pricing/pricing.service";
+import { RealtimeGateway } from "./modules/realtime/realtime.gateway";
+import { RideEventsService } from "./modules/realtime/ride-events.service";
 import { MatchingQueue } from "./modules/rides/matching.queue";
 import { MatchingService } from "./modules/rides/matching.service";
 import { RidesController } from "./modules/rides/rides.controller";
@@ -51,6 +53,8 @@ import { UsersController } from "./modules/users/users.controller";
     RidesService,
     MatchingService,
     MatchingQueue,
+    RideEventsService,
+    RealtimeGateway,
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
   ],

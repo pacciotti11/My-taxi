@@ -16,6 +16,7 @@ import type { CancelRideInput, RequestRideInput } from "@privateride/validation"
 import { PrismaService } from "../../common/prisma.service";
 import type { AuthenticatedUser } from "../../common/types";
 import { PricingService } from "../pricing/pricing.service";
+import { RideEventsService } from "../realtime/ride-events.service";
 
 export interface TransitionContext {
   actorId?: string | null;
@@ -28,6 +29,7 @@ export class RidesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly pricing: PricingService,
+    private readonly events: RideEventsService,
   ) {}
 
   /**
@@ -67,10 +69,19 @@ export class RidesService {
       });
       return updated;
     };
+    // With a caller-provided transaction the caller publishes the event
+    // after commit; here we own the transaction and publish on success.
     if (tx) return run(tx);
-    return this.prisma.$transaction(run, {
+    const result = await this.prisma.$transaction(run, {
       isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
     });
+    await this.events.publish({
+      type: "status",
+      rideId,
+      status: to,
+      at: new Date().toISOString(),
+    });
+    return result;
   }
 
   async requestRide(

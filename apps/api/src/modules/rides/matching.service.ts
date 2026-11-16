@@ -16,6 +16,7 @@ import {
 } from "@privateride/shared";
 import { PrismaService } from "../../common/prisma.service";
 import type { AuthenticatedUser } from "../../common/types";
+import { RideEventsService } from "../realtime/ride-events.service";
 import { RidesService } from "./rides.service";
 
 export interface DriverCandidate {
@@ -30,6 +31,7 @@ export class MatchingService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly rides: RidesService,
+    private readonly events: RideEventsService,
   ) {}
 
   /**
@@ -110,6 +112,12 @@ export class MatchingService {
       this.logger.log(
         `Ride ${rideId}: offered to driver ${best.driverProfileId} (${Math.round(best.distanceM)} m)`,
       );
+      await this.events.publish({
+        type: "offer",
+        rideId,
+        driverProfileId: best.driverProfileId,
+        expiresAt: assignment.expiresAt.toISOString(),
+      });
       return assignment;
     }
     return null;
@@ -131,7 +139,7 @@ export class MatchingService {
     if (!vehicle) throw new ConflictException("No approved active vehicle");
 
     try {
-      return await this.prisma.$transaction(async (tx) => {
+      const result = await this.prisma.$transaction(async (tx) => {
         const assignment = await tx.rideAssignment.findUnique({
           where: {
             rideId_driverProfileId: {
@@ -175,6 +183,13 @@ export class MatchingService {
           tx,
         );
       });
+      await this.events.publish({
+        type: "status",
+        rideId,
+        status: "DRIVER_ARRIVING",
+        at: new Date().toISOString(),
+      });
+      return result;
     } catch (e) {
       if (
         e instanceof Prisma.PrismaClientKnownRequestError &&

@@ -23,6 +23,7 @@ import { AuditService } from "../../common/audit.service";
 import { PrismaService } from "../../common/prisma.service";
 import { RedisService } from "../../common/redis.service";
 import type { AuthenticatedUser } from "../../common/types";
+import { RideEventsService } from "../realtime/ride-events.service";
 
 export const driverAvailabilityKey = (driverProfileId: string) =>
   `driver:available:${driverProfileId}`;
@@ -35,6 +36,7 @@ export class DriversService {
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
     private readonly audit: AuditService,
+    private readonly events: RideEventsService,
   ) {}
 
   async getOwnProfile(userId: string) {
@@ -178,6 +180,44 @@ export class DriversService {
     );
     // Refresh availability heartbeat.
     await this.redis.client.expire(driverAvailabilityKey(profile.id), 120);
+
+    // During an active ride: persist the trace point and notify participants.
+    const activeRide = await this.prisma.ride.findFirst({
+      where: {
+        driverId: profile.id,
+        status: {
+          in: [
+            "ACCEPTED",
+            "DRIVER_ARRIVING",
+            "DRIVER_ARRIVED",
+            "IN_PROGRESS",
+          ],
+        },
+      },
+      select: { id: true },
+    });
+    if (activeRide) {
+      await this.prisma.$executeRaw`
+        INSERT INTO "RideLocation" ("rideId", "point", "speedMps", "headingDeg", "accuracyM", "recordedAt")
+        VALUES (
+          ${activeRide.id}::uuid,
+          ST_SetSRID(ST_MakePoint(${input.lng}, ${input.lat}), 4326)::geography,
+          ${input.speedMps ?? null},
+          ${input.headingDeg ?? null},
+          ${input.accuracyM ?? null},
+          ${input.recordedAt}
+        )
+      `;
+      await this.events.publish({
+        type: "location",
+        rideId: activeRide.id,
+        driverProfileId: profile.id,
+        lat: input.lat,
+        lng: input.lng,
+        headingDeg: input.headingDeg,
+        recordedAt: input.recordedAt.toISOString(),
+      });
+    }
     return { accepted: true };
   }
 
