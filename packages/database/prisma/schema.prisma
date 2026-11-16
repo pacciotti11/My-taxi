@@ -1,0 +1,734 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [postgis]
+}
+
+// ---------------------------------------------------------------------------
+// Identity & membership
+// ---------------------------------------------------------------------------
+
+enum RoleName {
+  PASSENGER
+  DRIVER
+  COMMUNITY_ADMIN
+  SUPER_ADMIN
+}
+
+enum MembershipStatus {
+  INVITED
+  PENDING_APPROVAL
+  ACTIVE
+  SUSPENDED
+  REJECTED
+  DEACTIVATED
+}
+
+model User {
+  id                String    @id @default(uuid()) @db.Uuid
+  email             String    @unique
+  emailVerifiedAt   DateTime?
+  phone             String?   @unique
+  phoneVerifiedAt   DateTime?
+  passwordHash      String
+  firstName         String
+  lastName          String
+  locale            String    @default("bg")
+  avatarUrl         String?
+  termsAcceptedAt   DateTime?
+  privacyAcceptedAt DateTime?
+  deletionRequestedAt DateTime?
+  deletedAt         DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  roles             UserRole[]
+  memberships       CommunityMembership[]
+  driverProfile     DriverProfile?
+  ridesAsPassenger  Ride[]                @relation("PassengerRides")
+  invitationsIssued Invitation[]          @relation("InvitedBy")
+  invitationUsed    Invitation?           @relation("UsedBy")
+  refreshTokens     RefreshToken[]
+  ratingsGiven      Rating[]              @relation("RatingsGiven")
+  ratingsReceived   Rating[]              @relation("RatingsReceived")
+  notifications     Notification[]
+  deviceTokens      DeviceToken[]
+  supportTickets    SupportTicket[]
+  auditLogs         AuditLog[]            @relation("AuditActor")
+  paymentMethods    PaymentMethod[]
+
+  @@index([deletedAt])
+}
+
+model Role {
+  id    String     @id @default(uuid()) @db.Uuid
+  name  RoleName   @unique
+  users UserRole[]
+}
+
+model UserRole {
+  userId     String   @db.Uuid
+  roleId     String   @db.Uuid
+  grantedAt  DateTime @default(now())
+  grantedBy  String?  @db.Uuid
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role       Role     @relation(fields: [roleId], references: [id])
+
+  @@id([userId, roleId])
+}
+
+model Community {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @unique
+  description String?
+  // service area center + radius; refined polygons can come later
+  serviceAreaCenter Unsupported("geography(Point,4326)")?
+  serviceAreaRadiusM Int?
+  defaultCurrency String @default("BGN")
+  settings    Json     @default("{}")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  memberships  CommunityMembership[]
+  invitations  Invitation[]
+  pricingRules PricingRule[]
+  rides        Ride[]
+}
+
+model CommunityMembership {
+  id          String           @id @default(uuid()) @db.Uuid
+  userId      String           @db.Uuid
+  communityId String           @db.Uuid
+  status      MembershipStatus @default(PENDING_APPROVAL)
+  approvedAt  DateTime?
+  approvedBy  String?          @db.Uuid
+  suspendedAt DateTime?
+  suspendedReason String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  community Community @relation(fields: [communityId], references: [id])
+
+  @@unique([userId, communityId])
+  @@index([communityId, status])
+}
+
+enum InvitationStatus {
+  PENDING
+  USED
+  EXPIRED
+  REVOKED
+}
+
+model Invitation {
+  id           String           @id @default(uuid()) @db.Uuid
+  communityId  String           @db.Uuid
+  // Only a hash of the invitation code is stored; the raw code is shown once.
+  codeHash     String           @unique
+  role         RoleName         @default(PASSENGER)
+  status       InvitationStatus @default(PENDING)
+  maxUses      Int              @default(1)
+  usedCount    Int              @default(0)
+  expiresAt    DateTime
+  invitedEmail String?
+  invitedById  String           @db.Uuid
+  usedById     String?          @unique @db.Uuid
+  revokedAt    DateTime?
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  community Community @relation(fields: [communityId], references: [id])
+  invitedBy User      @relation("InvitedBy", fields: [invitedById], references: [id])
+  usedBy    User?     @relation("UsedBy", fields: [usedById], references: [id])
+
+  @@index([communityId, status])
+  @@index([expiresAt])
+}
+
+// ---------------------------------------------------------------------------
+// Drivers & vehicles
+// ---------------------------------------------------------------------------
+
+enum DriverVerificationStatus {
+  UNSUBMITTED
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+  UPDATE_REQUESTED
+  SUSPENDED
+}
+
+model DriverProfile {
+  id                 String                   @id @default(uuid()) @db.Uuid
+  userId             String                   @unique @db.Uuid
+  verificationStatus DriverVerificationStatus @default(UNSUBMITTED)
+  licenseNumber      String?
+  ratingAvg          Decimal                  @default(0) @db.Decimal(3, 2)
+  ratingCount        Int                      @default(0)
+  payoutAccountRef   String? // provider-side connected account id, never raw bank data
+  isOnline           Boolean                  @default(false)
+  lastOnlineAt       DateTime?
+  createdAt          DateTime                 @default(now())
+  updatedAt          DateTime                 @updatedAt
+
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  vehicles  Vehicle[]
+  documents DriverDocument[]
+  rides     Ride[]           @relation("DriverRides")
+  assignments RideAssignment[]
+  payouts   Payout[]
+  location  DriverLocation?
+
+  @@index([verificationStatus])
+  @@index([isOnline])
+}
+
+enum DocumentStatus {
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+  UPDATE_REQUESTED
+}
+
+model DriverDocument {
+  id              String         @id @default(uuid()) @db.Uuid
+  driverProfileId String         @db.Uuid
+  type            String // e.g. DRIVING_LICENSE, INSURANCE, VEHICLE_REGISTRATION
+  // Private object-storage key. Access only through signed URLs.
+  storageKey      String
+  status          DocumentStatus @default(PENDING_REVIEW)
+  reviewNote      String?
+  reviewedBy      String?        @db.Uuid
+  reviewedAt      DateTime?
+  expiresAt       DateTime?
+  createdAt       DateTime       @default(now())
+
+  driverProfile DriverProfile @relation(fields: [driverProfileId], references: [id], onDelete: Cascade)
+
+  @@index([driverProfileId, type])
+}
+
+enum VehicleCategory {
+  STANDARD
+  COMFORT
+  VAN
+}
+
+model Vehicle {
+  id                 String          @id @default(uuid()) @db.Uuid
+  driverProfileId    String          @db.Uuid
+  make               String
+  model              String
+  color              String
+  registrationNumber String          @unique
+  category           VehicleCategory @default(STANDARD)
+  seats              Int             @default(4)
+  verificationStatus DocumentStatus  @default(PENDING_REVIEW)
+  active             Boolean         @default(false)
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  driverProfile DriverProfile @relation(fields: [driverProfileId], references: [id], onDelete: Cascade)
+  rides         Ride[]
+}
+
+// ---------------------------------------------------------------------------
+// Rides
+// ---------------------------------------------------------------------------
+
+enum RideStatus {
+  REQUESTED
+  SEARCHING
+  OFFERED
+  ACCEPTED
+  DRIVER_ARRIVING
+  DRIVER_ARRIVED
+  IN_PROGRESS
+  PAYMENT_PENDING
+  PAYMENT_FAILED
+  COMPLETED
+  CANCELLED
+  EXPIRED
+}
+
+enum CancelledBy {
+  PASSENGER
+  DRIVER
+  SYSTEM
+  ADMIN
+}
+
+model Ride {
+  id            String     @id @default(uuid()) @db.Uuid
+  communityId   String     @db.Uuid
+  passengerId   String     @db.Uuid
+  driverId      String?    @db.Uuid
+  vehicleId     String?    @db.Uuid
+  status        RideStatus @default(REQUESTED)
+  vehicleCategory VehicleCategory @default(STANDARD)
+
+  pickupAddress  String
+  pickupPoint    Unsupported("geography(Point,4326)")
+  dropoffAddress String
+  dropoffPoint   Unsupported("geography(Point,4326)")
+
+  estimatedDistanceM Int?
+  estimatedDurationS Int?
+  actualDistanceM    Int?
+  actualDurationS    Int?
+
+  currency          String  @default("BGN")
+  estimatedFareMinor Int?
+  finalFareMinor     Int?
+  pricingSnapshotId  String? @db.Uuid
+
+  requestedAt   DateTime  @default(now())
+  acceptedAt    DateTime?
+  arrivedAt     DateTime?
+  startedAt     DateTime?
+  completedAt   DateTime?
+  cancelledAt   DateTime?
+  cancelledBy   CancelledBy?
+  cancelReason  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  community       Community        @relation(fields: [communityId], references: [id])
+  passenger       User             @relation("PassengerRides", fields: [passengerId], references: [id])
+  driver          DriverProfile?   @relation("DriverRides", fields: [driverId], references: [id])
+  vehicle         Vehicle?         @relation(fields: [vehicleId], references: [id])
+  pricingSnapshot PricingSnapshot? @relation(fields: [pricingSnapshotId], references: [id])
+  statusHistory   RideStatusHistory[]
+  assignments     RideAssignment[]
+  locations       RideLocation[]
+  payments        Payment[]
+  ratings         Rating[]
+
+  @@index([passengerId, createdAt])
+  @@index([driverId, status])
+  @@index([communityId, status])
+  // Partial unique index enforcing one active ride per driver is added in
+  // migration SQL (Prisma cannot express partial indexes declaratively).
+}
+
+model RideStatusHistory {
+  id        String     @id @default(uuid()) @db.Uuid
+  rideId    String     @db.Uuid
+  fromStatus RideStatus?
+  toStatus  RideStatus
+  actorId   String?    @db.Uuid // user who caused the transition; null = system
+  reason    String?
+  createdAt DateTime   @default(now())
+
+  ride Ride @relation(fields: [rideId], references: [id], onDelete: Cascade)
+
+  @@index([rideId, createdAt])
+}
+
+enum AssignmentStatus {
+  OFFERED
+  ACCEPTED
+  REJECTED
+  TIMED_OUT
+  CANCELLED
+}
+
+model RideAssignment {
+  id              String           @id @default(uuid()) @db.Uuid
+  rideId          String           @db.Uuid
+  driverProfileId String           @db.Uuid
+  status          AssignmentStatus @default(OFFERED)
+  offeredAt       DateTime         @default(now())
+  respondedAt     DateTime?
+  expiresAt       DateTime
+
+  ride          Ride          @relation(fields: [rideId], references: [id], onDelete: Cascade)
+  driverProfile DriverProfile @relation(fields: [driverProfileId], references: [id])
+
+  @@unique([rideId, driverProfileId])
+  @@index([driverProfileId, status])
+}
+
+model RideLocation {
+  id        BigInt   @id @default(autoincrement())
+  rideId    String   @db.Uuid
+  point     Unsupported("geography(Point,4326)")
+  speedMps  Float?
+  headingDeg Float?
+  accuracyM Float?
+  recordedAt DateTime
+  createdAt DateTime @default(now())
+
+  ride Ride @relation(fields: [rideId], references: [id], onDelete: Cascade)
+
+  @@index([rideId, recordedAt])
+}
+
+model DriverLocation {
+  driverProfileId String   @id @db.Uuid
+  point           Unsupported("geography(Point,4326)")
+  accuracyM       Float?
+  recordedAt      DateTime
+  updatedAt       DateTime @default(now())
+
+  driverProfile DriverProfile @relation(fields: [driverProfileId], references: [id], onDelete: Cascade)
+}
+
+// ---------------------------------------------------------------------------
+// Pricing
+// ---------------------------------------------------------------------------
+
+model PricingRule {
+  id              String          @id @default(uuid()) @db.Uuid
+  communityId     String          @db.Uuid
+  vehicleCategory VehicleCategory @default(STANDARD)
+  currency        String          @default("BGN")
+  version         Int
+  active          Boolean         @default(true)
+
+  baseFareMinor      Int
+  perKmMinor         Int
+  perMinuteMinor     Int
+  minimumFareMinor   Int
+  cancellationFeeMinor Int @default(0)
+  commissionPercent  Decimal @default(0) @db.Decimal(5, 2)
+
+  validFrom DateTime @default(now())
+  validTo   DateTime?
+  createdAt DateTime @default(now())
+  createdBy String?  @db.Uuid
+
+  community Community @relation(fields: [communityId], references: [id])
+  snapshots PricingSnapshot[]
+
+  @@unique([communityId, vehicleCategory, currency, version])
+  @@index([communityId, active])
+}
+
+model PricingSnapshot {
+  id            String   @id @default(uuid()) @db.Uuid
+  pricingRuleId String   @db.Uuid
+  // Full copy of the rule values at estimate time, immutable.
+  data          Json
+  createdAt     DateTime @default(now())
+
+  pricingRule PricingRule @relation(fields: [pricingRuleId], references: [id])
+  rides       Ride[]
+}
+
+// ---------------------------------------------------------------------------
+// Payments & ledger
+// ---------------------------------------------------------------------------
+
+enum PaymentStatus {
+  REQUIRES_AUTHORIZATION
+  AUTHORIZED
+  CAPTURED
+  CANCELLED
+  FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+model PaymentMethod {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @db.Uuid
+  provider    String // "stripe" | "sandbox"
+  providerRef String // provider-side payment method / token id, never PAN
+  brand       String?
+  last4       String?
+  expMonth    Int?
+  expYear     Int?
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  deletedAt   DateTime?
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  payments Payment[]
+
+  @@unique([provider, providerRef])
+  @@index([userId])
+}
+
+model Payment {
+  id              String        @id @default(uuid()) @db.Uuid
+  rideId          String        @db.Uuid
+  paymentMethodId String?       @db.Uuid
+  provider        String
+  providerRef     String? // payment intent id
+  status          PaymentStatus @default(REQUIRES_AUTHORIZATION)
+  currency        String
+  amountMinor     Int
+  capturedMinor   Int?
+  refundedMinor   Int           @default(0)
+  platformFeeMinor Int          @default(0)
+  driverNetMinor  Int?
+  failureCode     String?
+  failureMessage  String?
+  authorizedAt    DateTime?
+  capturedAt      DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  ride          Ride           @relation(fields: [rideId], references: [id])
+  paymentMethod PaymentMethod? @relation(fields: [paymentMethodId], references: [id])
+  attempts      PaymentAttempt[]
+  refunds       Refund[]
+
+  @@unique([provider, providerRef])
+  @@index([rideId])
+  @@index([status])
+}
+
+model PaymentAttempt {
+  id        String   @id @default(uuid()) @db.Uuid
+  paymentId String   @db.Uuid
+  action    String // AUTHORIZE | CAPTURE | CANCEL | REFUND
+  success   Boolean
+  errorCode String?
+  rawRef    String?
+  createdAt DateTime @default(now())
+
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@index([paymentId, createdAt])
+}
+
+enum RefundStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+}
+
+model Refund {
+  id          String       @id @default(uuid()) @db.Uuid
+  paymentId   String       @db.Uuid
+  providerRef String?      @unique
+  amountMinor Int
+  currency    String
+  reason      String?
+  status      RefundStatus @default(PENDING)
+  createdBy   String?      @db.Uuid
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  payment Payment @relation(fields: [paymentId], references: [id])
+}
+
+enum PayoutStatus {
+  PENDING
+  IN_TRANSIT
+  PAID
+  FAILED
+  CANCELLED
+}
+
+model Payout {
+  id              String       @id @default(uuid()) @db.Uuid
+  driverProfileId String       @db.Uuid
+  provider        String
+  providerRef     String?      @unique
+  status          PayoutStatus @default(PENDING)
+  currency        String
+  amountMinor     Int
+  periodStart     DateTime
+  periodEnd       DateTime
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  driverProfile DriverProfile @relation(fields: [driverProfileId], references: [id])
+
+  @@index([driverProfileId, status])
+}
+
+enum LedgerEntryType {
+  PASSENGER_CHARGE
+  PASSENGER_REFUND
+  PLATFORM_FEE
+  DRIVER_EARNING
+  DRIVER_PAYOUT
+  ADJUSTMENT
+}
+
+model FinancialLedgerEntry {
+  id          String          @id @default(uuid()) @db.Uuid
+  type        LedgerEntryType
+  // Double-entry style: every entry debits one account and credits another.
+  debitAccount  String // e.g. "passenger:<id>", "platform:revenue", "driver:<id>"
+  creditAccount String
+  currency    String
+  amountMinor Int
+  rideId      String? @db.Uuid
+  paymentId   String? @db.Uuid
+  payoutId    String? @db.Uuid
+  refundId    String? @db.Uuid
+  // Guarantees the same financial event is never booked twice.
+  idempotencyKey String @unique
+  memo        String?
+  createdAt   DateTime @default(now())
+
+  @@index([rideId])
+  @@index([debitAccount])
+  @@index([creditAccount])
+}
+
+// ---------------------------------------------------------------------------
+// Ratings, notifications, support, audit
+// ---------------------------------------------------------------------------
+
+model Rating {
+  id        String   @id @default(uuid()) @db.Uuid
+  rideId    String   @db.Uuid
+  raterId   String   @db.Uuid
+  rateeId   String   @db.Uuid
+  score     Int // 1..5, checked in migration SQL
+  comment   String?
+  createdAt DateTime @default(now())
+
+  ride  Ride @relation(fields: [rideId], references: [id])
+  rater User @relation("RatingsGiven", fields: [raterId], references: [id])
+  ratee User @relation("RatingsReceived", fields: [rateeId], references: [id])
+
+  @@unique([rideId, raterId])
+  @@index([rateeId])
+}
+
+enum NotificationChannel {
+  PUSH
+  IN_APP
+  EMAIL
+  SMS
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+  READ
+}
+
+model Notification {
+  id        String              @id @default(uuid()) @db.Uuid
+  userId    String              @db.Uuid
+  channel   NotificationChannel
+  event     String
+  title     String
+  body      String
+  data      Json                @default("{}")
+  status    NotificationStatus  @default(PENDING)
+  sentAt    DateTime?
+  readAt    DateTime?
+  createdAt DateTime            @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+}
+
+model DeviceToken {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  platform  String // ios | android
+  token     String   @unique
+  createdAt DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+enum TicketStatus {
+  OPEN
+  IN_REVIEW
+  RESOLVED
+  CLOSED
+}
+
+model SupportTicket {
+  id        String       @id @default(uuid()) @db.Uuid
+  userId    String       @db.Uuid
+  rideId    String?      @db.Uuid
+  subject   String
+  body      String
+  status    TicketStatus @default(OPEN)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([status])
+}
+
+model AuditLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  actorId   String?  @db.Uuid
+  action    String
+  entity    String
+  entityId  String?
+  metadata  Json     @default("{}")
+  ip        String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  actor User? @relation("AuditActor", fields: [actorId], references: [id])
+
+  @@index([actorId, createdAt])
+  @@index([entity, entityId])
+}
+
+// ---------------------------------------------------------------------------
+// Integration plumbing
+// ---------------------------------------------------------------------------
+
+model WebhookEvent {
+  id          String    @id @default(uuid()) @db.Uuid
+  provider    String
+  providerEventId String
+  type        String
+  payload     Json
+  processedAt DateTime?
+  error       String?
+  receivedAt  DateTime  @default(now())
+
+  @@unique([provider, providerEventId])
+  @@index([provider, processedAt])
+}
+
+model IdempotencyKey {
+  key        String   @id
+  scope      String
+  responseJson Json?
+  createdAt  DateTime @default(now())
+  expiresAt  DateTime
+
+  @@index([expiresAt])
+}
+
+// ---------------------------------------------------------------------------
+// Auth
+// ---------------------------------------------------------------------------
+
+model RefreshToken {
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @db.Uuid
+  // Only the SHA-256 hash of the token is stored.
+  tokenHash  String    @unique
+  familyId   String    @db.Uuid // rotation family; reuse of a revoked member revokes the family
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  replacedBy String?   @db.Uuid
+  userAgent  String?
+  ip         String?
+  createdAt  DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([familyId])
+}

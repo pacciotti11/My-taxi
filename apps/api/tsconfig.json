@@ -1,0 +1,10 @@
+{
+  "extends": "@privateride/config/tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "declaration": false,
+    "strictPropertyInitialization": false
+  },
+  "include": ["src"]
+}

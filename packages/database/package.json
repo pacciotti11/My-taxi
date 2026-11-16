@@ -1,0 +1,27 @@
+{
+  "name": "@privateride/database",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "generate": "prisma generate",
+    "migrate:dev": "prisma migrate dev",
+    "migrate:deploy": "prisma migrate deploy",
+    "seed": "node --experimental-strip-types prisma/seed.ts",
+    "test": "echo 'no tests'"
+  },
+  "prisma": {
+    "schema": "prisma/schema.prisma"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.2.1"
+  },
+  "devDependencies": {
+    "@privateride/config": "workspace:*",
+    "prisma": "^6.2.1",
+    "typescript": "^5.7.3",
+    "argon2": "^0.41.1"
+  }
+}
