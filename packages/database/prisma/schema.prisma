@@ -274,9 +274,13 @@ model Ride {
   vehicleCategory VehicleCategory @default(STANDARD)
 
   pickupAddress  String
-  pickupPoint    Unsupported("geography(Point,4326)")
+  pickupLat      Float
+  pickupLng      Float
+  pickupPoint    Unsupported("geography(Point,4326)")?
   dropoffAddress String
-  dropoffPoint   Unsupported("geography(Point,4326)")
+  dropoffLat     Float
+  dropoffLng     Float
+  dropoffPoint   Unsupported("geography(Point,4326)")?
 
   estimatedDistanceM Int?
   estimatedDurationS Int?
