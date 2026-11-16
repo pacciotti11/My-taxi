@@ -23,6 +23,7 @@ import {
 } from "../../common/guards/decorators";
 import type { AuthenticatedUser } from "../../common/types";
 import { ZodValidationPipe } from "../../common/zod-validation.pipe";
+import { PaymentsService } from "../payments/payments.service";
 import { PricingService } from "../pricing/pricing.service";
 import { MatchingQueue } from "./matching.queue";
 import { MatchingService } from "./matching.service";
@@ -36,6 +37,7 @@ export class RidesController {
     private readonly matching: MatchingService,
     private readonly queue: MatchingQueue,
     private readonly pricing: PricingService,
+    private readonly payments: PaymentsService,
   ) {}
 
   // --- Passenger ---
@@ -54,9 +56,41 @@ export class RidesController {
     @CurrentUser() user: AuthenticatedUser,
     @Body(new ZodValidationPipe(RequestRideSchema)) body: RequestRideInput,
   ) {
+    // Fail fast before creating anything when no payment method exists.
+    await this.payments.requireDefaultMethod(user.id);
     const ride = await this.rides.requestRide(user, body);
+    try {
+      await this.payments.authorizeForRide(ride);
+    } catch (e) {
+      // Authorization failed: the ride must not keep searching.
+      await this.rides.transition(ride.id, "CANCELLED", {
+        actorId: user.id,
+        reason: "payment_authorization_failed",
+        extraData: { cancelledAt: new Date(), cancelledBy: "SYSTEM" },
+      });
+      throw e;
+    }
     await this.queue.startSearch(ride.id);
     return ride;
+  }
+
+  @Post(":id/retry-payment")
+  @HttpCode(200)
+  async retryPayment(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("id", ParseUUIDPipe) id: string,
+  ) {
+    // Participant check (404 for strangers) before settling.
+    await this.rides.getRideForParticipant(user, id);
+    return this.payments.settleRide(id);
+  }
+
+  @Get(":id/receipt")
+  receipt(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("id", ParseUUIDPipe) id: string,
+  ) {
+    return this.payments.receipt(user, id);
   }
 
   @Get()
@@ -135,10 +169,12 @@ export class RidesController {
   @Post(":id/complete")
   @Roles(Role.DRIVER)
   @HttpCode(200)
-  complete(
+  async complete(
     @CurrentUser() user: AuthenticatedUser,
     @Param("id", ParseUUIDPipe) id: string,
   ) {
-    return this.rides.completeRide(user, id);
+    await this.rides.completeRide(user, id); // -> PAYMENT_PENDING
+    // Capture the fare and finish the ride (COMPLETED or PAYMENT_FAILED).
+    return this.payments.settleRide(id);
   }
 }

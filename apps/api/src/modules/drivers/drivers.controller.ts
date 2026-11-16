@@ -30,17 +30,26 @@ import {
 } from "../../common/guards/decorators";
 import type { AuthenticatedUser } from "../../common/types";
 import { ZodValidationPipe } from "../../common/zod-validation.pipe";
+import { PayoutsService } from "../payments/payouts.service";
 import { DriversService } from "./drivers.service";
 
 @RequireActiveMember()
 @Roles(Role.DRIVER)
 @Controller({ path: "drivers", version: "1" })
 export class DriversController {
-  constructor(private readonly drivers: DriversService) {}
+  constructor(
+    private readonly drivers: DriversService,
+    private readonly payouts: PayoutsService,
+  ) {}
 
   @Get("me")
   me(@CurrentUser() user: AuthenticatedUser) {
     return this.drivers.getOwnProfile(user.id);
+  }
+
+  @Get("earnings")
+  earnings(@CurrentUser() user: AuthenticatedUser) {
+    return this.payouts.driverEarnings(user);
   }
 
   @Post("profile")

@@ -137,6 +137,7 @@ describe("Ride lifecycle & matching (e2e)", () => {
   });
 
   it("runs the full happy path: request → match → accept → arrive → start → complete", async () => {
+    await prisma.driverProfile.updateMany({ data: { isOnline: false } });
     const passenger = await registerAndApprove(app, world, "p1@test.local");
     const driver = await makeDriver(app, world, "d1@test.local");
 
@@ -179,7 +180,7 @@ describe("Ride lifecycle & matching (e2e)", () => {
       .post(`/v1/rides/${ride.id}/complete`)
       .set("authorization", `Bearer ${driver.token}`)
       .expect(200);
-    expect(done.body.status).toBe("PAYMENT_PENDING");
+    expect(done.body.status).toBe("COMPLETED");
     expect(done.body.finalFareMinor).toBeGreaterThanOrEqual(500);
 
     const history = await prisma.rideStatusHistory.findMany({
@@ -195,10 +196,12 @@ describe("Ride lifecycle & matching (e2e)", () => {
       "DRIVER_ARRIVED",
       "IN_PROGRESS",
       "PAYMENT_PENDING",
+      "COMPLETED",
     ]);
   });
 
   it("prevents a driver from completing a ride that has not started", async () => {
+    await prisma.driverProfile.updateMany({ data: { isOnline: false } });
     const passenger = await registerAndApprove(app, world, "p2@test.local");
     const driver = await makeDriver(app, world, "d2@test.local");
     const ride = await requestRide(app, passenger.token);
@@ -228,6 +231,7 @@ describe("Ride lifecycle & matching (e2e)", () => {
   });
 
   it("enforces one active ride per driver at the database level", async () => {
+    await prisma.driverProfile.updateMany({ data: { isOnline: false } });
     const p3 = await registerAndApprove(app, world, "p3@test.local");
     const p4 = await registerAndApprove(app, world, "p4@test.local");
     const driver = await makeDriver(app, world, "d3@test.local");
@@ -283,6 +287,7 @@ describe("Ride lifecycle & matching (e2e)", () => {
   });
 
   it("keeps a second driver from taking a ride offered to another driver", async () => {
+    await prisma.driverProfile.updateMany({ data: { isOnline: false } });
     const passenger = await registerAndApprove(app, world, "p5@test.local");
     const driverA = await makeDriver(app, world, "d4@test.local");
     const driverB = await makeDriver(app, world, "d5@test.local", {

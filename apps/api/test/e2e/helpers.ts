@@ -11,7 +11,7 @@ export async function createApp(): Promise<INestApplication> {
   const moduleRef = await Test.createTestingModule({
     imports: [AppModule],
   }).compile();
-  const app = moduleRef.createNestApplication();
+  const app = moduleRef.createNestApplication({ rawBody: true });
   app.enableVersioning({ type: VersioningType.URI, defaultVersion: "1" });
   await app.init();
   return app;
@@ -125,5 +125,12 @@ export async function registerAndApprove(
     .post("/v1/auth/login")
     .send({ email, password: "Parola1234X" })
     .expect(200);
-  return { userId: reg.body.user.id, token: login.body.tokens.accessToken };
+  const token = login.body.tokens.accessToken as string;
+  // Every member gets a working sandbox payment method by default.
+  await request(app.getHttpServer())
+    .post("/v1/payments/methods")
+    .set("authorization", `Bearer ${token}`)
+    .send({ token: `sandbox_pm_ok_${reg.body.user.id}`, brand: "visa", last4: "4242" })
+    .expect(201);
+  return { userId: reg.body.user.id, token };
 }

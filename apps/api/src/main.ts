@@ -8,7 +8,8 @@ import { loadEnv } from "./config/env";
 
 async function bootstrap(): Promise<void> {
   const env = loadEnv();
-  const app = await NestFactory.create(AppModule);
+  // rawBody is needed for payment webhook signature verification.
+  const app = await NestFactory.create(AppModule, { rawBody: true });
 
   app.use(helmet());
   app.enableVersioning({ type: VersioningType.URI, defaultVersion: "1" });
