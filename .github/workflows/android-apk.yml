@@ -21,6 +21,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 75
+    permissions:
+      contents: write # create the GitHub Release that hosts the APK
     env:
       CI: "1"
       ANDROID_VERSION_CODE: ${{ github.run_number }}
@@ -82,6 +84,38 @@ jobs:
           name: privateride-apk-${{ github.run_number }}
           path: site/privateride.apk
           retention-days: 30
+
+      # A release gives a stable public URL that always points at the newest
+      # APK, whatever the Pages setting:
+      #   https://github.com/<owner>/<repo>/releases/latest/download/privateride.apk
+      - name: Publish APK as GitHub Release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="android-build-${ANDROID_VERSION_CODE}"
+          SHA=$(sha256sum site/privateride.apk | cut -d' ' -f1)
+          cat > release-notes.md <<EOF
+          Тестов билд на PrivateRide за Android (build ${ANDROID_VERSION_CODE}, commit ${GITHUB_SHA::7}).
+
+          **Инсталиране:** свали \`privateride.apk\` на телефона и разреши инсталиране от неизвестен източник.
+          **Свързване:** на екрана за вход → ⚙︎ Сървър → постави адреса от \`./scripts/dev-tunnel.sh\`.
+
+          Подписан с ключ за разработка. Само за тестване, плащанията са симулирани.
+
+          SHA-256: \`${SHA}\`
+          EOF
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            # Re-run of the same build: replace the asset instead of failing.
+            gh release upload "$TAG" site/privateride.apk --clobber
+          else
+            gh release create "$TAG" site/privateride.apk \
+              --title "PrivateRide Android · build ${ANDROID_VERSION_CODE}" \
+              --notes-file release-notes.md \
+              --target "$GITHUB_SHA" \
+              --latest
+          fi
 
       - name: QR code for the page
         run: |
