@@ -1,9 +1,5 @@
-import Constants from "expo-constants";
 import * as SecureStore from "expo-secure-store";
-
-export const API_URL: string =
-  (Constants.expoConfig?.extra?.apiUrl as string | undefined) ??
-  "http://localhost:3000";
+import { getApiUrl, TUNNEL_HEADERS } from "./server";
 
 const ACCESS_KEY = "pr_access";
 const REFRESH_KEY = "pr_refresh";
@@ -31,12 +27,23 @@ export class ApiError extends Error {
   }
 }
 
+/** NestJS errors carry `message` as a string or as `{ message, errors }`. */
+function errorMessage(body: unknown): string | undefined {
+  if (!body || typeof body !== "object" || !("message" in body)) return undefined;
+  const m = (body as { message: unknown }).message;
+  if (typeof m === "string") return m;
+  if (m && typeof m === "object" && "message" in m) {
+    return String((m as { message: unknown }).message);
+  }
+  return m == null ? undefined : JSON.stringify(m);
+}
+
 async function refreshTokens(): Promise<boolean> {
   const refreshToken = await SecureStore.getItemAsync(REFRESH_KEY);
   if (!refreshToken) return false;
-  const res = await fetch(`${API_URL}/v1/auth/refresh`, {
+  const res = await fetch(`${await getApiUrl()}/v1/auth/refresh`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...TUNNEL_HEADERS },
     body: JSON.stringify({ refreshToken }),
   });
   if (!res.ok) {
@@ -57,29 +64,39 @@ export async function api<T>(
   retried = false,
 ): Promise<T> {
   const token = await getAccessToken();
-  const res = await fetch(`${API_URL}${path}`, {
-    ...options,
-    headers: {
-      "content-type": "application/json",
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
-      ...(options.headers ?? {}),
-    },
-  });
+  const baseUrl = await getApiUrl();
+  let res: Response;
+  try {
+    res = await fetch(`${baseUrl}${path}`, {
+      ...options,
+      headers: {
+        "content-type": "application/json",
+        ...TUNNEL_HEADERS,
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+        ...(options.headers ?? {}),
+      },
+    });
+  } catch {
+    throw new ApiError(0, `Няма връзка със сървъра (${baseUrl})`);
+  }
   if (res.status === 401 && !retried && (await refreshTokens())) {
     return api<T>(path, options, true);
   }
-  const body = res.status === 204 ? null : await res.json();
+  let body: unknown = null;
+  if (res.status !== 204) {
+    const raw = await res.text();
+    try {
+      body = raw ? JSON.parse(raw) : null;
+    } catch {
+      // A tunnel that is down answers with an HTML page, not JSON.
+      throw new ApiError(
+        res.status,
+        `Сървърът върна неочакван отговор (${res.status}). Работи ли API-то и тунелът?`,
+      );
+    }
+  }
   if (!res.ok) {
-    const message =
-      (body && ((body as { message?: { message?: string } | string }).message as
-        | { message?: string }
-        | string
-        | undefined)) ?? res.statusText;
-    const text =
-      typeof message === "object" && message
-        ? (message.message ?? JSON.stringify(message))
-        : String(message);
-    throw new ApiError(res.status, text);
+    throw new ApiError(res.status, errorMessage(body) ?? res.statusText);
   }
   return body as T;
 }

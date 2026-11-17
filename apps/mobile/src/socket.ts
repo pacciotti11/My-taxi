@@ -1,5 +1,6 @@
 import { io, Socket } from "socket.io-client";
-import { API_URL, getAccessToken } from "./api";
+import { getAccessToken } from "./api";
+import { getApiUrl, TUNNEL_HEADERS } from "./server";
 
 let socket: Socket | null = null;
 
@@ -8,9 +9,10 @@ export async function getSocket(): Promise<Socket> {
   if (socket?.connected) return socket;
   const token = await getAccessToken();
   socket?.disconnect();
-  socket = io(`${API_URL}/realtime`, {
+  socket = io(`${await getApiUrl()}/realtime`, {
     transports: ["websocket"],
     auth: { token },
+    extraHeaders: { ...TUNNEL_HEADERS },
   });
   return socket;
 }

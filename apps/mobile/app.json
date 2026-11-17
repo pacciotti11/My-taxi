@@ -33,9 +33,6 @@
           "locationAlwaysAndWhenInUsePermission": "Шофьорите споделят местоположение по време на активен курс."
         }
       ]
-    ],
-    "extra": {
-      "apiUrl": "http://localhost:3000"
-    }
+    ]
   }
 }

@@ -17,7 +17,9 @@
   },
   "devDependencies": {
     "turbo": "^2.3.4",
-    "typescript": "^5.7.3"
+    "typescript": "^5.7.3",
+    "react": "19.2.0",
+    "react-dom": "19.2.0"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
@@ -31,6 +33,14 @@
       "@nestjs/core",
       "@swc/core",
       "bcrypt"
-    ]
+    ],
+    "overrides": {
+      "@react-navigation/native": "~7.0.14",
+      "@react-navigation/core": "~7.3.0",
+      "@react-navigation/bottom-tabs": "~7.2.0",
+      "@react-navigation/native-stack": "~7.2.0",
+      "@react-navigation/elements": "~2.2.5",
+      "@react-navigation/routers": "~7.1.0"
+    }
   }
 }

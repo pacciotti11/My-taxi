@@ -10,3 +10,6 @@ coverage/
 .turbo/
 *.tsbuildinfo
 .DS_Store
+.dev-credentials
+.api.log
+.ngrok.log

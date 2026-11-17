@@ -39,9 +39,15 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @privateride/database exec prisma generate
       - run: pnpm --filter @privateride/shared --filter @privateride/validation --filter @privateride/database build
       - run: pnpm --filter @privateride/database exec prisma migrate deploy
       - run: pnpm --filter @privateride/api build
       - run: pnpm --filter @privateride/api test
       - run: pnpm --filter @privateride/admin build
       - run: pnpm --filter @privateride/mobile exec tsc --noEmit
+      - name: Bundle Android JS (same Metro step an APK build runs)
+        run: pnpm --filter @privateride/mobile exec expo export --platform android --output-dir /tmp/expo-export
+        env:
+          CI: "1"
+          EXPO_PUBLIC_ALLOW_SERVER_OVERRIDE: "1"
