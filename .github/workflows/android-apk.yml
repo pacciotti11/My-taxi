@@ -1,0 +1,108 @@
+name: Android APK + download page
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "apps/mobile/**"
+      - "pages/**"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/android-apk.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-apk
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      CI: "1"
+      ANDROID_VERSION_CODE: ${{ github.run_number }}
+      # Test builds let the tester point the app at their own server (ngrok).
+      EXPO_PUBLIC_ALLOW_SERVER_OVERRIDE: "1"
+      NODE_ENV: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Generate native Android project
+        working-directory: apps/mobile
+        run: pnpm exec expo prebuild --platform android --no-install --clean
+
+      - name: Build release APK
+        working-directory: apps/mobile/android
+        # arm64-v8a covers practically every Android phone from the last
+        # ~8 years; armeabi-v7a covers older 32-bit ones. Emulator ABIs
+        # (x86/x86_64) are skipped to halve build time.
+        run: ./gradlew assembleRelease --no-daemon -PreactNativeArchitectures=arm64-v8a,armeabi-v7a
+
+      - name: Assemble download page
+        id: site
+        run: |
+          set -euo pipefail
+          mkdir -p site
+          APK=apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+          cp "$APK" site/privateride.apk
+          cp pages/index.html site/index.html
+          VERSION=$(node -p "require('./apps/mobile/app.json').expo.version")
+          SHA=$(sha256sum site/privateride.apk | cut -d' ' -f1)
+          SIZE=$(stat -c %s site/privateride.apk)
+          cat > site/build.json <<EOF
+          {
+            "version": "$VERSION",
+            "versionCode": $ANDROID_VERSION_CODE,
+            "commit": "${GITHUB_SHA::7}",
+            "builtAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "sha256": "$SHA",
+            "sizeBytes": $SIZE
+          }
+          EOF
+          cat site/build.json
+
+      - name: Keep APK as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: privateride-apk-${{ github.run_number }}
+          path: site/privateride.apk
+          retention-days: 30
+
+      - name: QR code for the page
+        run: |
+          OWNER=$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')
+          REPO="${GITHUB_REPOSITORY#*/}"
+          # The qrcode CLI reads stdin when it is not a TTY; close it or it hangs.
+          npx --yes qrcode@1.5.4 -t svg -o site/qr.svg "https://${OWNER}.github.io/${REPO}/" </dev/null
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
